@@ -103,8 +103,8 @@ public class CursorModule implements IXposedHookLoadPackage {
                     } catch (Throwable error) { trace("Launcher home capture: " + error); }
                 }
             };
-            XposedHelpers.hookAllMethods(controller, "init", capture);
-            XposedHelpers.hookAllMethods(controller, "onConfigurationChanged", capture);
+            XposedBridge.hookAllMethods(controller, "init", capture);
+            XposedBridge.hookAllMethods(controller, "onConfigurationChanged", capture);
             trace("Launcher controller hooked in " + p.packageName);
         } catch (Throwable error) { trace("Launcher controller unavailable: " + error); }
     }

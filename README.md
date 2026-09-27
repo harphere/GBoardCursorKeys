@@ -1,4 +1,4 @@
-# Gboard Cursor Keys 1.0.6 navigation row prototype
+# Gboard Cursor Keys 1.0.7 navigation row prototype
 
 LSPosed module for two cursor arrows in the navigation row while Gboard is visible. Tap once to move one character; hold for 350 ms to repeat every 75 ms.
 
