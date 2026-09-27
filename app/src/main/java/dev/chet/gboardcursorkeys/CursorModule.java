@@ -140,31 +140,32 @@ public class CursorModule implements IXposedHookLoadPackage {
             if (contains((ViewGroup) parent, back)) { host = (ViewGroup) parent; break; }
         }
         if (host == null) { trace("Launcher shared navigation parent missing"); return; }
-        final ViewGroup navHost = host;
-        if (navHosts.contains(host)) return;
+        ViewParent outer = host.getParent();
+        final ViewGroup navHost = outer instanceof FrameLayout ? (ViewGroup) outer : host;
+        if (navHosts.contains(navHost)) return;
         try {
-            TextView left = navButton(host.getContext(), "‹", KeyEvent.KEYCODE_DPAD_LEFT);
-            TextView right = navButton(host.getContext(), "›", KeyEvent.KEYCODE_DPAD_RIGHT);
+            TextView left = navButton(navHost.getContext(), "‹", KeyEvent.KEYCODE_DPAD_LEFT);
+            TextView right = navButton(navHost.getContext(), "›", KeyEvent.KEYCODE_DPAD_RIGHT);
             if (home instanceof android.widget.ImageView) {
                 android.content.res.ColorStateList tint = ((android.widget.ImageView) home).getImageTintList();
                 if (tint != null) {
                     left.setTextColor(tint); right.setTextColor(tint);
                 }
             }
-            int width = dp(host.getContext(), 40);
-            if (host instanceof android.widget.LinearLayout) {
-                android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(width, -1);
-                host.addView(left, 0, params);
-                host.addView(right, new android.widget.LinearLayout.LayoutParams(width, -1));
-            } else if (host instanceof FrameLayout) {
+            int width = dp(navHost.getContext(), 40);
+            if (navHost instanceof FrameLayout) {
                 FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, -1, Gravity.LEFT);
                 FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(width, -1, Gravity.RIGHT);
-                host.addView(left, lp);
-                host.addView(right, rp);
+                navHost.addView(left, lp);
+                navHost.addView(right, rp);
+            } else if (navHost instanceof android.widget.LinearLayout) {
+                android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(width, -1);
+                navHost.addView(left, 0, params);
+                navHost.addView(right, new android.widget.LinearLayout.LayoutParams(width, -1));
             } else {
-                trace("unsupported navigation parent: " + host.getClass().getName()); return;
+                trace("unsupported navigation parent: " + navHost.getClass().getName()); return;
             }
-            navHosts.add(host);
+            navHosts.add(navHost);
             BroadcastReceiver visibility = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent intent) {
                     boolean shown = intent.getBooleanExtra("visible", false);
@@ -186,8 +187,8 @@ public class CursorModule implements IXposedHookLoadPackage {
                     }, 100);
                 }
             };
-            host.getContext().registerReceiver(visibility, new IntentFilter(VISIBILITY), Context.RECEIVER_EXPORTED);
-            host.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            navHost.getContext().registerReceiver(visibility, new IntentFilter(VISIBILITY), Context.RECEIVER_EXPORTED);
+            navHost.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
                 @Override public void onViewAttachedToWindow(View view) { }
                 @Override public void onViewDetachedFromWindow(View view) {
                     try { view.getContext().unregisterReceiver(visibility); } catch (Throwable ignored) { }
@@ -195,8 +196,8 @@ public class CursorModule implements IXposedHookLoadPackage {
                     view.removeOnAttachStateChangeListener(this);
                 }
             });
-            host.getContext().sendBroadcast(new Intent(QUERY).setPackage("com.google.android.inputmethod.latin"));
-            trace("Launcher nav arrows attached: " + host.getClass().getName());
+            navHost.getContext().sendBroadcast(new Intent(QUERY).setPackage("com.google.android.inputmethod.latin"));
+            trace("Launcher nav arrows attached: " + navHost.getClass().getName());
         } catch (Throwable error) { trace("Launcher nav attach failed: " + error); }
     }
 

@@ -1,4 +1,4 @@
-# Gboard Cursor Keys 1.0.9 navigation row diagnostic
+# Gboard Cursor Keys 1.0.10 navigation row
 
 LSPosed module for two cursor arrows in the navigation row while Gboard is visible. Tap once to move one character; hold for 350 ms to repeat every 75 ms.
 
@@ -7,7 +7,7 @@ The Xposed API dependency resolves through `https://api.xposed.info/`, listed in
 
 ## Diagnostic test
 
-Enable the module in LSPosed for **Gboard** (`com.google.android.inputmethod.latin`) and **Launcher3** (`com.android.launcher3`), then reboot. Open Gboard and send the Launcher3 log line beginning `GboardCursorKeys: nav bounds`. It reports the measured bounds and tint of the invisible arrows without logging typed text. This build is intended to diagnose why Launcher3 reports the arrows visible but does not draw them on screen.
+Enable the module in LSPosed for **Gboard** (`com.google.android.inputmethod.latin`) and **Launcher3** (`com.android.launcher3`), then reboot. This build places the arrows in the wider `NearestTouchFrame` that surrounds the 3-button row; prior bounds showed both arrows extended outside the narrower button strip. Open Gboard and test taps and holds. If the arrows are still missing or do not respond, send `GboardCursorKeys: nav bounds` and `Launcher sent` lines from LSPosed. Diagnostic logs do not contain typed text.
 
 ## Build and install
 
