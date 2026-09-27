@@ -3,6 +3,7 @@ package dev.chet.gboardcursorkeys;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.inputmethodservice.InputMethodService;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -14,6 +15,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.ExtractedText;
+import android.view.inputmethod.ExtractedTextRequest;
+import android.view.inputmethod.SurroundingText;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
@@ -98,6 +102,52 @@ public class CursorModule implements IXposedHookLoadPackage {
     private static void move(InputMethodService ime, int code) {
         InputConnection connection = ime.getCurrentInputConnection();
         if (connection == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                SurroundingText surrounding = connection.getSurroundingText(64, 64, 0);
+                if (surrounding != null && surrounding.getOffset() >= 0) {
+                    int start = surrounding.getSelectionStart();
+                    int end = surrounding.getSelectionEnd();
+                    CharSequence content = surrounding.getText();
+                    if (start >= 0 && end >= 0 && content != null
+                            && start <= content.length() && end <= content.length()) {
+                        int position;
+                        if (code == KeyEvent.KEYCODE_DPAD_LEFT) {
+                            position = Math.min(start, end);
+                            if (start == end && position > 0) {
+                                position--;
+                                if (position > 0 && Character.isLowSurrogate(content.charAt(position))
+                                        && Character.isHighSurrogate(content.charAt(position - 1))) position--;
+                            }
+                        } else {
+                            position = Math.max(start, end);
+                            if (start == end && position < content.length()) {
+                                if (Character.isHighSurrogate(content.charAt(position))
+                                        && position + 1 < content.length()
+                                        && Character.isLowSurrogate(content.charAt(position + 1))) position++;
+                                position++;
+                            }
+                        }
+                        if (connection.setSelection(surrounding.getOffset() + position,
+                                surrounding.getOffset() + position)) return;
+                    }
+                }
+            }
+            ExtractedText extracted = connection.getExtractedText(new ExtractedTextRequest(), 0);
+            if (extracted != null && extracted.text != null && extracted.selectionStart >= 0
+                    && extracted.selectionEnd >= 0 && extracted.startOffset >= 0) {
+                int position = code == KeyEvent.KEYCODE_DPAD_LEFT
+                        ? Math.min(extracted.selectionStart, extracted.selectionEnd)
+                        : Math.max(extracted.selectionStart, extracted.selectionEnd);
+                if (extracted.selectionStart == extracted.selectionEnd) {
+                    position = code == KeyEvent.KEYCODE_DPAD_LEFT
+                            ? Math.max(0, position - 1) : Math.min(extracted.text.length(), position + 1);
+                }
+                if (connection.setSelection(extracted.startOffset + position,
+                        extracted.startOffset + position)) return;
+            }
+        } catch (Throwable ignored) { /* Some editors do not expose selection APIs. */ }
+        // Fallback for editors that implement key events but not selection APIs.
         long time = SystemClock.uptimeMillis();
         connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0, 0,
                 KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD));
