@@ -1,0 +1,131 @@
+package dev.chet.gboardcursorkeys;
+
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.inputmethodservice.InputMethodService;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.view.Gravity;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
+import android.view.inputmethod.InputConnection;
+import android.widget.FrameLayout;
+import android.widget.TextView;
+
+import java.lang.ref.WeakReference;
+import java.util.WeakHashMap;
+
+import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedHelpers;
+import de.robv.android.xposed.callbacks.XC_LoadPackage;
+
+public class CursorModule implements IXposedHookLoadPackage {
+    private static final WeakHashMap<InputMethodService, WeakReference<FrameLayout>> overlays = new WeakHashMap<>();
+    private static final int TAG = 0x4732434b;
+
+    @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
+        if (!"com.google.android.inputmethod.latin".equals(p.packageName)) return;
+        XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowShown", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam param) {
+                InputMethodService ime = (InputMethodService)param.thisObject;
+                ime.getWindow().getWindow().getDecorView().post(() -> attach(ime));
+            }
+        });
+        XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowHidden", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam param) { detach((InputMethodService)param.thisObject); }
+        });
+        XposedHelpers.findAndHookMethod(InputMethodService.class, "onDestroy", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam param) { detach((InputMethodService)param.thisObject); }
+        });
+    }
+
+    private static void attach(InputMethodService ime) {
+        try {
+            Window window = ime.getWindow().getWindow();
+            ViewGroup decor = (ViewGroup) window.getDecorView();
+            View existing = decor.findViewWithTag(TAG);
+            if (existing != null) return;
+            FrameLayout layer = new FrameLayout(ime);
+            layer.setTag(TAG);
+            layer.setClickable(false);
+            layer.setFocusable(false);
+            int size = dp(ime, 44), edge = dp(ime, 3), bottom = dp(ime, 2);
+            TextView left = button(ime, "‹", KeyEvent.KEYCODE_DPAD_LEFT);
+            TextView right = button(ime, "›", KeyEvent.KEYCODE_DPAD_RIGHT);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(size, size, Gravity.BOTTOM | Gravity.LEFT);
+            lp.leftMargin = edge; lp.bottomMargin = bottom;
+            layer.addView(left, lp);
+            FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(size, size, Gravity.BOTTOM | Gravity.RIGHT);
+            rp.rightMargin = edge; rp.bottomMargin = bottom;
+            layer.addView(right, rp);
+            decor.addView(layer, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            overlays.put(ime, new WeakReference<>(layer));
+        } catch (Throwable ignored) { /* Never break the keyboard when its window differs. */ }
+    }
+
+    private static TextView button(InputMethodService ime, String glyph, int keycode) {
+        TextView view = new TextView(ime);
+        view.setText(glyph);
+        view.setTextSize(29);
+        view.setGravity(Gravity.CENTER);
+        view.setIncludeFontPadding(false);
+        boolean night = (ime.getResources().getConfiguration().uiMode & 0x30) == 0x20;
+        view.setTextColor(night ? Color.WHITE : Color.rgb(35, 38, 45));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(night ? 0xCC383A40 : 0xDDE7E9EE);
+        background.setCornerRadius(dp(ime, 13));
+        view.setBackground(background);
+        view.setOnTouchListener(new RepeatListener(ime, keycode));
+        return view;
+    }
+
+    private static void detach(InputMethodService ime) {
+        WeakReference<FrameLayout> ref = overlays.remove(ime);
+        FrameLayout layer = ref == null ? null : ref.get();
+        if (layer != null && layer.getParent() instanceof ViewGroup) ((ViewGroup)layer.getParent()).removeView(layer);
+    }
+
+    private static int dp(InputMethodService ime, int n) {
+        return (int)(n * ime.getResources().getDisplayMetrics().density + .5f);
+    }
+
+    private static void move(InputMethodService ime, int code) {
+        InputConnection connection = ime.getCurrentInputConnection();
+        if (connection == null) return;
+        long time = SystemClock.uptimeMillis();
+        connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD));
+        connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_UP, code, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD));
+    }
+
+    private static class RepeatListener implements View.OnTouchListener {
+        private final InputMethodService ime;
+        private final int code;
+        private final Handler handler = new Handler(Looper.getMainLooper());
+        private boolean pressed;
+        private final Runnable repeat = new Runnable() {
+            @Override public void run() {
+                if (pressed) { move(ime, code); handler.postDelayed(this, 75); }
+            }
+        };
+        RepeatListener(InputMethodService ime, int code) { this.ime = ime; this.code = code; }
+        @Override public boolean onTouch(View view, MotionEvent event) {
+            switch(event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    pressed = true; view.setPressed(true); move(ime, code);
+                    handler.postDelayed(repeat, 350); return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    pressed = false; view.setPressed(false); handler.removeCallbacks(repeat); return true;
+                default: return true;
+            }
+        }
+    }
+}
