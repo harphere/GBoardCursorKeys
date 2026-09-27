@@ -42,6 +42,8 @@ public class CursorModule implements IXposedHookLoadPackage {
     private static final WeakHashMap<InputMethodService, WeakReference<FrameLayout>> overlays = new WeakHashMap<>();
     private static final int TAG = 0x4732434b;
     private static final String ACTION = "dev.chet.gboardcursorkeys.MOVE_CURSOR";
+    private static final String VISIBILITY = "dev.chet.gboardcursorkeys.IME_VISIBILITY";
+    private static final String QUERY = "dev.chet.gboardcursorkeys.QUERY_IME";
     private static final Set<ViewGroup> navHosts = Collections.newSetFromMap(new WeakHashMap<>());
     private static final WeakHashMap<InputMethodService, BroadcastReceiver> receivers = new WeakHashMap<>();
     private static void trace(String message) { XposedBridge.log("GboardCursorKeys: " + message); }
@@ -57,11 +59,17 @@ public class CursorModule implements IXposedHookLoadPackage {
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowShown", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 InputMethodService ime = (InputMethodService)param.thisObject;
-                ime.getWindow().getWindow().getDecorView().post(() -> registerReceiver(ime));
+                ime.getWindow().getWindow().getDecorView().post(() -> {
+                    registerReceiver(ime);
+                    sendVisibility(ime, true);
+                });
             }
         });
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowHidden", new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam param) { detach((InputMethodService)param.thisObject); }
+            @Override protected void afterHookedMethod(MethodHookParam param) {
+                InputMethodService ime = (InputMethodService)param.thisObject;
+                sendVisibility(ime, false);
+            }
         });
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onDestroy", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) { unregisterReceiver((InputMethodService)param.thisObject); }
@@ -72,13 +80,19 @@ public class CursorModule implements IXposedHookLoadPackage {
         if (receivers.containsKey(ime)) return;
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
+                if (QUERY.equals(intent.getAction())) {
+                    sendVisibility(ime, ime.isInputViewShown());
+                    return;
+                }
                 if (!ACTION.equals(intent.getAction()) || !ime.isInputViewShown()) return;
                 int code = intent.getIntExtra("code", 0);
                 if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) move(ime, code);
             }
         };
         try {
-            ime.registerReceiver(receiver, new IntentFilter(ACTION), Context.RECEIVER_EXPORTED);
+            IntentFilter filter = new IntentFilter(ACTION);
+            filter.addAction(QUERY);
+            ime.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
             receivers.put(ime, receiver);
             trace("Gboard cursor receiver ready");
         } catch (Throwable error) { trace("receiver registration failed: " + error); }
@@ -87,6 +101,17 @@ public class CursorModule implements IXposedHookLoadPackage {
     private static void unregisterReceiver(InputMethodService ime) {
         BroadcastReceiver receiver = receivers.remove(ime);
         if (receiver != null) try { ime.unregisterReceiver(receiver); } catch (Throwable ignored) { }
+    }
+
+    private static void sendVisibility(Context context, boolean visible) {
+        for (String pkg : new String[]{"com.android.launcher3", "com.google.android.apps.nexuslauncher"}) {
+            try {
+                Intent message = new Intent(VISIBILITY).setPackage(pkg);
+                message.putExtra("visible", visible);
+                context.sendBroadcast(message);
+            } catch (Throwable error) { trace("visibility broadcast failed: " + error); }
+        }
+        trace("Gboard reported IME visible=" + visible);
     }
 
     private static void hookLauncher(XC_LoadPackage.LoadPackageParam p) {
@@ -140,17 +165,24 @@ public class CursorModule implements IXposedHookLoadPackage {
                 trace("unsupported navigation parent: " + host.getClass().getName()); return;
             }
             navHosts.add(host);
-            Runnable visibility = new Runnable() {
-                @Override public void run() {
-                    if (!navHost.isAttachedToWindow()) return;
-                    WindowInsets insets = navHost.getRootWindowInsets();
-                    boolean shown = insets != null && insets.isVisible(WindowInsets.Type.ime());
+            BroadcastReceiver visibility = new BroadcastReceiver() {
+                @Override public void onReceive(Context context, Intent intent) {
+                    boolean shown = intent.getBooleanExtra("visible", false);
                     left.setVisibility(shown ? View.VISIBLE : View.GONE);
                     right.setVisibility(shown ? View.VISIBLE : View.GONE);
-                    navHost.postDelayed(this, 300);
+                    trace("Launcher arrows visible=" + shown);
                 }
             };
-            host.post(visibility);
+            host.getContext().registerReceiver(visibility, new IntentFilter(VISIBILITY), Context.RECEIVER_EXPORTED);
+            host.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override public void onViewAttachedToWindow(View view) { }
+                @Override public void onViewDetachedFromWindow(View view) {
+                    try { view.getContext().unregisterReceiver(visibility); } catch (Throwable ignored) { }
+                    navHosts.remove(navHost);
+                    view.removeOnAttachStateChangeListener(this);
+                }
+            });
+            host.getContext().sendBroadcast(new Intent(QUERY).setPackage("com.google.android.inputmethod.latin"));
             trace("Launcher nav arrows attached: " + host.getClass().getName());
         } catch (Throwable error) { trace("Launcher nav attach failed: " + error); }
     }
