@@ -62,7 +62,9 @@ public class CursorModule implements IXposedHookLoadPackage {
             layer.setTag(TAG);
             layer.setClickable(false);
             layer.setFocusable(false);
-            int size = dp(ime, 44), edge = dp(ime, 3), bottom = dp(ime, 2);
+            // The decor's bottom edge includes the IME navigation area on this ROM.
+            // Draw above it so the arrows receive touches inside Gboard's window.
+            int size = dp(ime, 44), edge = dp(ime, 3), bottom = dp(ime, 64);
             TextView left = button(ime, "‹", KeyEvent.KEYCODE_DPAD_LEFT);
             TextView right = button(ime, "›", KeyEvent.KEYCODE_DPAD_RIGHT);
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(size, size, Gravity.BOTTOM | Gravity.LEFT);
@@ -74,6 +76,13 @@ public class CursorModule implements IXposedHookLoadPackage {
             decor.addView(layer, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             overlays.put(ime, new WeakReference<>(layer));
             trace("arrows attached; window=" + decor.getClass().getName());
+            layer.post(() -> {
+                int[] leftScreen = new int[2];
+                left.getLocationOnScreen(leftScreen);
+                trace("left button bounds: x=" + leftScreen[0] + " y=" + leftScreen[1]
+                        + " width=" + left.getWidth() + " height=" + left.getHeight()
+                        + " decorHeight=" + decor.getHeight());
+            });
         } catch (Throwable error) { trace("attach failed: " + error); }
     }
 
