@@ -26,15 +26,18 @@ import java.util.WeakHashMap;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class CursorModule implements IXposedHookLoadPackage {
     private static final WeakHashMap<InputMethodService, WeakReference<FrameLayout>> overlays = new WeakHashMap<>();
     private static final int TAG = 0x4732434b;
+    private static void trace(String message) { XposedBridge.log("GboardCursorKeys: " + message); }
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!"com.google.android.inputmethod.latin".equals(p.packageName)) return;
+        trace("loaded in Gboard");
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowShown", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 InputMethodService ime = (InputMethodService)param.thisObject;
@@ -70,7 +73,8 @@ public class CursorModule implements IXposedHookLoadPackage {
             layer.addView(right, rp);
             decor.addView(layer, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             overlays.put(ime, new WeakReference<>(layer));
-        } catch (Throwable ignored) { /* Never break the keyboard when its window differs. */ }
+            trace("arrows attached; window=" + decor.getClass().getName());
+        } catch (Throwable error) { trace("attach failed: " + error); }
     }
 
     private static TextView button(InputMethodService ime, String glyph, int keycode) {
@@ -101,10 +105,16 @@ public class CursorModule implements IXposedHookLoadPackage {
 
     private static void move(InputMethodService ime, int code) {
         InputConnection connection = ime.getCurrentInputConnection();
-        if (connection == null) return;
+        if (connection == null) { trace("move: current InputConnection is null"); return; }
+        trace("move: direction=" + (code == KeyEvent.KEYCODE_DPAD_LEFT ? "left" : "right")
+                + " connection=" + connection.getClass().getName());
         try {
             if (Build.VERSION.SDK_INT >= 31) {
                 SurroundingText surrounding = connection.getSurroundingText(64, 64, 0);
+                trace("surrounding: " + (surrounding == null ? "null" :
+                        "offset=" + surrounding.getOffset() + " selection="
+                                + surrounding.getSelectionStart() + "," + surrounding.getSelectionEnd()
+                                + " length=" + (surrounding.getText() == null ? -1 : surrounding.getText().length())));
                 if (surrounding != null && surrounding.getOffset() >= 0) {
                     int start = surrounding.getSelectionStart();
                     int end = surrounding.getSelectionEnd();
@@ -128,12 +138,18 @@ public class CursorModule implements IXposedHookLoadPackage {
                                 position++;
                             }
                         }
-                        if (connection.setSelection(surrounding.getOffset() + position,
-                                surrounding.getOffset() + position)) return;
+                        int absolute = surrounding.getOffset() + position;
+                        boolean applied = connection.setSelection(absolute, absolute);
+                        trace("surrounding setSelection(" + absolute + ")=" + applied);
+                        if (applied) return;
                     }
                 }
             }
             ExtractedText extracted = connection.getExtractedText(new ExtractedTextRequest(), 0);
+            trace("extracted: " + (extracted == null ? "null" :
+                    "offset=" + extracted.startOffset + " selection=" + extracted.selectionStart
+                            + "," + extracted.selectionEnd + " length="
+                            + (extracted.text == null ? -1 : extracted.text.length())));
             if (extracted != null && extracted.text != null && extracted.selectionStart >= 0
                     && extracted.selectionEnd >= 0 && extracted.startOffset >= 0) {
                 int position = code == KeyEvent.KEYCODE_DPAD_LEFT
@@ -143,16 +159,19 @@ public class CursorModule implements IXposedHookLoadPackage {
                     position = code == KeyEvent.KEYCODE_DPAD_LEFT
                             ? Math.max(0, position - 1) : Math.min(extracted.text.length(), position + 1);
                 }
-                if (connection.setSelection(extracted.startOffset + position,
-                        extracted.startOffset + position)) return;
+                int absolute = extracted.startOffset + position;
+                boolean applied = connection.setSelection(absolute, absolute);
+                trace("extracted setSelection(" + absolute + ")=" + applied);
+                if (applied) return;
             }
-        } catch (Throwable ignored) { /* Some editors do not expose selection APIs. */ }
+        } catch (Throwable error) { trace("selection failed: " + error); }
         // Fallback for editors that implement key events but not selection APIs.
         long time = SystemClock.uptimeMillis();
-        connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0, 0,
+        boolean down = connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0, 0,
                 KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD));
-        connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_UP, code, 0, 0,
+        boolean up = connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_UP, code, 0, 0,
                 KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD));
+        trace("key fallback: down=" + down + " up=" + up);
     }
 
     private static class RepeatListener implements View.OnTouchListener {
@@ -169,10 +188,12 @@ public class CursorModule implements IXposedHookLoadPackage {
         @Override public boolean onTouch(View view, MotionEvent event) {
             switch(event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
+                    trace("touch DOWN: " + (code == KeyEvent.KEYCODE_DPAD_LEFT ? "left" : "right"));
                     pressed = true; view.setPressed(true); move(ime, code);
                     handler.postDelayed(repeat, 350); return true;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
+                    trace("touch " + (event.getActionMasked() == MotionEvent.ACTION_UP ? "UP" : "CANCEL"));
                     pressed = false; view.setPressed(false); handler.removeCallbacks(repeat); return true;
                 default: return true;
             }

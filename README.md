@@ -1,9 +1,13 @@
-# Gboard Cursor Keys 1.0.3
+# Gboard Cursor Keys 1.0.4 diagnostic build
 
 LSPosed module for two cursor arrows at the bottom corners of Gboard. Tap once to move one character; hold for 350 ms to repeat every 75 ms. The buttons use light/dark colours from Android's current theme.
 
 This source ZIP uses the Android SDK preinstalled on GitHub's `ubuntu-latest` runner. It does not run `android-actions/setup-android` or `sdkmanager`, which previously failed with `Failed to find package 'tools'`.
 The Xposed API dependency resolves through `https://api.xposed.info/`, listed in `settings.gradle`.
+
+## Diagnostic test
+
+After installing 1.0.4, enable the module for Gboard in LSPosed and force-stop Gboard (or restart the phone). In a normal text field, type `abcd`, put the cursor between `b` and `c`, then tap each arrow once and hold one briefly. Open LSPosed's module log and share lines containing `GboardCursorKeys:`. The lines report touch events, connection availability, selection positions and return values; they do **not** include text from the editor. Avoid testing in a password field.
 
 ## Build and install
 
