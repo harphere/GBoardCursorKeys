@@ -1,8 +1,9 @@
-# Gboard Cursor Keys 1.0.0
+# Gboard Cursor Keys 1.0.2
 
 LSPosed module for two cursor arrows at the bottom corners of Gboard. Tap once to move one character; hold for 350 ms to repeat every 75 ms. The buttons use light/dark colours from Android's current theme.
 
 This source ZIP uses the Android SDK preinstalled on GitHub's `ubuntu-latest` runner. It does not run `android-actions/setup-android` or `sdkmanager`, which previously failed with `Failed to find package 'tools'`.
+The Xposed API dependency resolves through `https://api.xposed.info/`, listed in `settings.gradle`.
 
 ## Build and install
 
