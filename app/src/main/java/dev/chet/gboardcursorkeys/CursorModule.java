@@ -171,6 +171,19 @@ public class CursorModule implements IXposedHookLoadPackage {
                     left.setVisibility(shown ? View.VISIBLE : View.GONE);
                     right.setVisibility(shown ? View.VISIBLE : View.GONE);
                     trace("Launcher arrows visible=" + shown);
+                    if (shown) navHost.postDelayed(() -> {
+                        int[] hostXY = new int[2], leftXY = new int[2], rightXY = new int[2];
+                        navHost.getLocationOnScreen(hostXY);
+                        left.getLocationOnScreen(leftXY);
+                        right.getLocationOnScreen(rightXY);
+                        trace("nav bounds host=" + hostXY[0] + "," + hostXY[1] + " "
+                                + navHost.getWidth() + "x" + navHost.getHeight()
+                                + " parent=" + (navHost.getParent() == null ? "null" : navHost.getParent().getClass().getName())
+                                + " left=" + leftXY[0] + "," + leftXY[1] + " " + left.getWidth() + "x" + left.getHeight()
+                                + " right=" + rightXY[0] + "," + rightXY[1] + " " + right.getWidth() + "x" + right.getHeight()
+                                + " color=" + Integer.toHexString(left.getCurrentTextColor())
+                                + " attached=" + navHost.isAttachedToWindow());
+                    }, 100);
                 }
             };
             host.getContext().registerReceiver(visibility, new IntentFilter(VISIBILITY), Context.RECEIVER_EXPORTED);
