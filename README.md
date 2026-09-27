@@ -1,16 +1,16 @@
-# Gboard Cursor Keys 1.0.5 diagnostic build
+# Gboard Cursor Keys 1.0.6 navigation row prototype
 
-LSPosed module for two cursor arrows at the bottom corners of Gboard. Tap once to move one character; hold for 350 ms to repeat every 75 ms. The buttons use light/dark colours from Android's current theme.
+LSPosed module for two cursor arrows in the navigation row while Gboard is visible. Tap once to move one character; hold for 350 ms to repeat every 75 ms.
 
 This source ZIP uses the Android SDK preinstalled on GitHub's `ubuntu-latest` runner. It does not run `android-actions/setup-android` or `sdkmanager`, which previously failed with `Failed to find package 'tools'`.
 The Xposed API dependency resolves through `https://api.xposed.info/`, listed in `settings.gradle`.
 
 ## Diagnostic test
 
-After installing 1.0.5, enable the module for Gboard in LSPosed and force-stop Gboard (or restart the phone). The arrows are raised 64 dp from the bottom of the IME window to clear the navigation area. In a normal text field, type `abcd`, put the cursor between `b` and `c`, then tap each arrow once and hold one briefly. Open LSPosed's module log and share lines containing `GboardCursorKeys:`. The lines report button positions, touch events, connection availability, selection positions and return values; they do **not** include text from the editor. Avoid testing in a password field.
+Enable the module in LSPosed for **Gboard** (`com.google.android.inputmethod.latin`) and **Pixel Launcher** (`com.google.android.apps.nexuslauncher`), then reboot. If your navigation process is `com.android.launcher3` instead, scope that in place of Pixel Launcher. This prototype puts arrows in the Launcher navigation row and forwards their taps to Gboard. It does not modify NavDotStyle. In a normal text field, type `abcd`, put the cursor between `b` and `c`, then tap each arrow once and hold one briefly. Share LSPosed log lines containing `GboardCursorKeys:` if the controls are absent or unresponsive. The logs do **not** include text from the editor.
 
 ## Build and install
 
-Upload the contents of this folder to a GitHub repository, open **Actions → Build APK → Run workflow**, and download the `GboardCursorKeys-debug-apk` artifact after the run. Install `app-debug.apk`, enable **Gboard Cursor Keys** in LSPosed and scope **only Gboard** (`com.google.android.inputmethod.latin`). Force-stop Gboard or restart your phone, then test in a text field.
+Upload the contents of this folder to a GitHub repository, open **Actions → Build APK → Run workflow**, and download the `GboardCursorKeys-debug-apk` artifact after the run. Install `app-debug.apk`, enable **Gboard Cursor Keys** in LSPosed, scope Gboard and Pixel Launcher, then reboot and test in a text field.
 
-The module adds its buttons to the IME window and changes the cursor selection through the current input connection, with DPAD key events as a fallback. It does not need root commands or Accessibility. The overlays occupy 44 dp in each lower corner, so they may cover Gboard keys on some layouts. Gboard may use a different window implementation in a future version. If taps still do not move the cursor, send the LSPosed log and the name of the app and text field used for the test.
+This version uses Launcher3's navigation button container, which may vary between ROM releases. If the arrows do not appear, inspect the `Launcher controller` and `Launcher nav` log lines. If taps are logged but the cursor does not move, inspect the `Gboard cursor receiver` and `move` lines.

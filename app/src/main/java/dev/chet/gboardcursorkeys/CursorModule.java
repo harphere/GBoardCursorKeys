@@ -2,6 +2,10 @@ package dev.chet.gboardcursorkeys;
 
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
 import android.os.Handler;
@@ -14,6 +18,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.ViewParent;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.ExtractedText;
 import android.view.inputmethod.ExtractedTextRequest;
@@ -29,27 +35,168 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import java.util.Collections;
+import java.util.Set;
 
 public class CursorModule implements IXposedHookLoadPackage {
     private static final WeakHashMap<InputMethodService, WeakReference<FrameLayout>> overlays = new WeakHashMap<>();
     private static final int TAG = 0x4732434b;
+    private static final String ACTION = "dev.chet.gboardcursorkeys.MOVE_CURSOR";
+    private static final Set<ViewGroup> navHosts = Collections.newSetFromMap(new WeakHashMap<>());
+    private static final WeakHashMap<InputMethodService, BroadcastReceiver> receivers = new WeakHashMap<>();
     private static void trace(String message) { XposedBridge.log("GboardCursorKeys: " + message); }
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
+        if ("com.google.android.apps.nexuslauncher".equals(p.packageName)
+                || "com.android.launcher3".equals(p.packageName)) {
+            hookLauncher(p);
+            return;
+        }
         if (!"com.google.android.inputmethod.latin".equals(p.packageName)) return;
         trace("loaded in Gboard");
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowShown", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 InputMethodService ime = (InputMethodService)param.thisObject;
-                ime.getWindow().getWindow().getDecorView().post(() -> attach(ime));
+                ime.getWindow().getWindow().getDecorView().post(() -> registerReceiver(ime));
             }
         });
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onWindowHidden", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) { detach((InputMethodService)param.thisObject); }
         });
         XposedHelpers.findAndHookMethod(InputMethodService.class, "onDestroy", new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam param) { detach((InputMethodService)param.thisObject); }
+            @Override protected void afterHookedMethod(MethodHookParam param) { unregisterReceiver((InputMethodService)param.thisObject); }
         });
+    }
+
+    private static void registerReceiver(InputMethodService ime) {
+        if (receivers.containsKey(ime)) return;
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (!ACTION.equals(intent.getAction()) || !ime.isInputViewShown()) return;
+                int code = intent.getIntExtra("code", 0);
+                if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) move(ime, code);
+            }
+        };
+        try {
+            ime.registerReceiver(receiver, new IntentFilter(ACTION), Context.RECEIVER_EXPORTED);
+            receivers.put(ime, receiver);
+            trace("Gboard cursor receiver ready");
+        } catch (Throwable error) { trace("receiver registration failed: " + error); }
+    }
+
+    private static void unregisterReceiver(InputMethodService ime) {
+        BroadcastReceiver receiver = receivers.remove(ime);
+        if (receiver != null) try { ime.unregisterReceiver(receiver); } catch (Throwable ignored) { }
+    }
+
+    private static void hookLauncher(XC_LoadPackage.LoadPackageParam p) {
+        try {
+            Class<?> controller = XposedHelpers.findClass(
+                    "com.android.launcher3.taskbar.NavbarButtonsViewController", p.classLoader);
+            XC_MethodHook capture = new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object home = XposedHelpers.getObjectField(param.thisObject, "mHomeButton");
+                        Object back = XposedHelpers.getObjectField(param.thisObject, "mBackButton");
+                        if (home instanceof View && back instanceof View)
+                            ((View) home).post(() -> installNavButtons((View) home, (View) back));
+                    } catch (Throwable error) { trace("Launcher home capture: " + error); }
+                }
+            };
+            XposedHelpers.hookAllMethods(controller, "init", capture);
+            XposedHelpers.hookAllMethods(controller, "onConfigurationChanged", capture);
+            trace("Launcher controller hooked in " + p.packageName);
+        } catch (Throwable error) { trace("Launcher controller unavailable: " + error); }
+    }
+
+    private static void installNavButtons(View home, View back) {
+        ViewGroup host = null;
+        for (ViewParent parent = home.getParent(); parent instanceof ViewGroup; parent = parent.getParent()) {
+            if (contains((ViewGroup) parent, back)) { host = (ViewGroup) parent; break; }
+        }
+        if (host == null) { trace("Launcher shared navigation parent missing"); return; }
+        final ViewGroup navHost = host;
+        if (navHosts.contains(host)) return;
+        try {
+            TextView left = navButton(host.getContext(), "‹", KeyEvent.KEYCODE_DPAD_LEFT);
+            TextView right = navButton(host.getContext(), "›", KeyEvent.KEYCODE_DPAD_RIGHT);
+            if (home instanceof android.widget.ImageView) {
+                android.content.res.ColorStateList tint = ((android.widget.ImageView) home).getImageTintList();
+                if (tint != null) {
+                    left.setTextColor(tint); right.setTextColor(tint);
+                }
+            }
+            int width = dp(host.getContext(), 40);
+            if (host instanceof android.widget.LinearLayout) {
+                android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(width, -1);
+                host.addView(left, 0, params);
+                host.addView(right, new android.widget.LinearLayout.LayoutParams(width, -1));
+            } else if (host instanceof FrameLayout) {
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, -1, Gravity.LEFT);
+                FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(width, -1, Gravity.RIGHT);
+                host.addView(left, lp);
+                host.addView(right, rp);
+            } else {
+                trace("unsupported navigation parent: " + host.getClass().getName()); return;
+            }
+            navHosts.add(host);
+            Runnable visibility = new Runnable() {
+                @Override public void run() {
+                    if (!navHost.isAttachedToWindow()) return;
+                    WindowInsets insets = navHost.getRootWindowInsets();
+                    boolean shown = insets != null && insets.isVisible(WindowInsets.Type.ime());
+                    left.setVisibility(shown ? View.VISIBLE : View.GONE);
+                    right.setVisibility(shown ? View.VISIBLE : View.GONE);
+                    navHost.postDelayed(this, 300);
+                }
+            };
+            host.post(visibility);
+            trace("Launcher nav arrows attached: " + host.getClass().getName());
+        } catch (Throwable error) { trace("Launcher nav attach failed: " + error); }
+    }
+
+    private static boolean contains(ViewGroup group, View child) {
+        for (ViewParent parent = child.getParent(); parent != null; parent = parent.getParent())
+            if (parent == group) return true;
+        return false;
+    }
+
+    private static TextView navButton(Context context, String glyph, int code) {
+        TextView button = new TextView(context);
+        button.setText(glyph);
+        button.setTextSize(27);
+        button.setGravity(Gravity.CENTER);
+        button.setVisibility(View.GONE);
+        button.setOnTouchListener(new View.OnTouchListener() {
+            final Handler handler = new Handler(Looper.getMainLooper());
+            boolean pressed;
+            final Runnable repeat = new Runnable() {
+                @Override public void run() {
+                    if (pressed) { dispatch(context, code); handler.postDelayed(this, 75); }
+                }
+            };
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        pressed = true; view.setPressed(true); dispatch(context, code);
+                        handler.postDelayed(repeat, 350); return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        pressed = false; view.setPressed(false); handler.removeCallbacks(repeat); return true;
+                    default: return true;
+                }
+            }
+        });
+        return button;
+    }
+
+    private static void dispatch(Context context, int code) {
+        try {
+            Intent intent = new Intent(ACTION).setPackage("com.google.android.inputmethod.latin");
+            intent.putExtra("code", code);
+            context.sendBroadcast(intent);
+            trace("Launcher sent " + (code == KeyEvent.KEYCODE_DPAD_LEFT ? "left" : "right"));
+        } catch (Throwable error) { trace("Launcher dispatch failed: " + error); }
     }
 
     private static void attach(InputMethodService ime) {
@@ -108,8 +255,8 @@ public class CursorModule implements IXposedHookLoadPackage {
         if (layer != null && layer.getParent() instanceof ViewGroup) ((ViewGroup)layer.getParent()).removeView(layer);
     }
 
-    private static int dp(InputMethodService ime, int n) {
-        return (int)(n * ime.getResources().getDisplayMetrics().density + .5f);
+    private static int dp(Context context, int n) {
+        return (int)(n * context.getResources().getDisplayMetrics().density + .5f);
     }
 
     private static void move(InputMethodService ime, int code) {
